@@ -53,7 +53,7 @@ Before deciding on this, I ran some data anlysis using Pandas to count how many 
 3448
 ```
 
-Given the requirements are specifying a query based in time (specifically year), I think it makes sense to use the same attribute to split the indexes. I wouldn't go as far as an index per-day, but an index per-year might make some sense. This is an oversimplification though: in a real-life scenario we'll have to take more things into consideration:
+Given the requirements are specifying a query based in time (specifically year), I think it makes sense to use the same attribute to split the indexes. I wouldn't go as far as an index per-month, but an index per-year might make some sense. This is an oversimplification though: in a real-life scenario we'll have to take more things into consideration:
 
 - What's the data distribution like? If we have a lot of data in the last, say, 80 years, those indexes will be much larger than those from 150 years ago.
 - What's the query frequency in older data points? We may end up having hot and cold indexes by using this design.
@@ -61,3 +61,7 @@ Given the requirements are specifying a query based in time (specifically year),
 In a production situation, we'd run some more queries to assess the data distribution and perhaps decide on a different indexing pattern, plus trying to get more requirements over how this data will be queried.
 
 Lastly, for sharding I'll use the "City" as the shard key. This means that every document for a single city within the same index will live in the same shard, and it's critical for performance: when we run a query to get data from a given city, we'll only need to hit the shards containing that info.
+
+### Web Framework
+
+Given I did not choose a relation database, I will not gain much by using Django on this use case. Without taking advantage of the admin, ORM, forms, templates, etc... seems quite unnecessary to go full-on "batteries included" approach. So instead, I'll use Flask with some additional libraries like the Elasticsearch pyhton client.
