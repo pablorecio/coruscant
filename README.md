@@ -98,6 +98,50 @@ $ pip install -r requirements-tests.txt
 $ pytest
 ```
 
+## API
+
+The web app is serving 3 different endpoints:
+
+### POST /api/measurement/add
+
+Creates a new measurement with the following required fields:
+
+JSON body:
+- `average_temperature` - Float
+- `average_temperature_uncertainty` - Float
+- `city` - String
+- `country` - String
+- `day` - Date. Format YYYY-MM-DD.
+- `location` - Object with both `lat` and `lon` as floats.
+
+Example:
+
+```
+{
+    "average_temperature": 36.656,
+    "average_temperature_uncertainty": 0.47,
+    "city": "Ahvaz",
+    "country": "Iran",
+    "day": "2021-12-01",
+    "location": {
+        "lat": 31.35,
+        "lon": 49.01
+    }
+}
+```
+
+### PATCH /api/measurement/update?city=<city>&day=<day>
+
+Updates a measurement by its city and day. It receives at least one of:
+
+JSON body:
+- `average_temperature` - Float
+- `average_temperature_uncertainty` - Float
+
+### GET /api/measurements?cities=<N>&from=<from>&to=<to>
+
+Gets the N top cities with the highest monthly average in the given time range. All paramenters are optional, with `N` defaulting to 10, `from` defaulting to 1500-01-01 and `to` to today.
+
 ## Examples
 
 - Find the entry whose city has the highest AverageTemperature since the year 2000.
@@ -187,6 +231,6 @@ This little task took me around 8 hours to complete, mainly due to some issues b
 
 I worked around it by using aggregation queries, but it ended up being overly complicated just to shoehorn that library everywhere, so I trailed back and refactored the endpoint to use the basic elasticsearch python client and turned out with the code a bit cleaner.
 
-That said, in a real-world example I'd probably use some library like flask-restful to make the API endpoints a bit cleaner, and perhaps a better ES wrapper to make the logic a bit more transparent.
+That said, in a real-world example I'd probably use some library like flask-restful to make the API endpoints a bit cleaner, integration with Swagger, and perhaps a better ES wrapper to make the logic a bit more transparent.
 
 Also, spent a bit of more time being extra careful about the endpoints being well covered for multiple cases, and not raise 500s, adding some comprehensive error handling for the frontend to use.
