@@ -46,7 +46,7 @@ def generate_es_document(obj: dict[str: Any]) -> Measurement:
             return Decimal(temp)
 
     measurement = Measurement(
-        day=datetime.strptime(obj['dt'], '%Y-%m-%d'),
+        day=datetime.strptime(obj['dt'], '%Y-%m-%d').date(),
         average_temperature=clean_temperature(obj['AverageTemperature']),
         average_temperature_uncertainty=clean_temperature(obj['AverageTemperatureUncertainty']),
         city=obj['City'],

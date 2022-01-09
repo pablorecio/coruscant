@@ -1,11 +1,18 @@
 from flask import Flask
 
-from coruscant.api import measurements_list as measurements_list_api
+from coruscant.api import (
+    measurement_add as measurement_add_api,
+    measurements_list as measurements_list_api
+)
 
 app = Flask(__name__)
 
 
-# @app.route('/api/measurement/add')
+@app.route('/api/measurement/add', methods=['POST'])
+def measurement_add():
+    return measurement_add_api()
+
+
 # @app.route('/api/measurement/update')
 @app.route('/api/measurements')
 def measurements_list():

@@ -11,6 +11,105 @@ BASE_REQUEST_BODY = {
 }
 
 
+@pytest.mark.parametrize('obj, result, status_code', [
+    (
+        {
+            'average_temperature': 41,
+            'average_temperature_uncertainty': 0.37,
+            'city': 'Jerez',
+            'country': 'Spain',
+            'day': '2021-08-01',
+            'location': {
+                'lat': 31.35,
+                'lon': 49.01
+            }
+        },
+        {
+            'average_temperature': 41,
+            'average_temperature_uncertainty': 0.37,
+            'city': 'Jerez',
+            'country': 'Spain',
+            'day': 'Sun, 01 Aug 2021 00:00:00 GMT',
+            'location': {
+                'lat': 31.35,
+                'lon': 49.01
+            }
+        },
+        201
+    ),
+    (
+        {},
+        {'errors': [
+            'Missing field average_temperature',
+            'Missing field average_temperature_uncertainty',
+            'Missing field city',
+            'Missing field country',
+            'Missing field day',
+            'Missing field location'
+        ]},
+        400
+    ),
+    (
+        {
+            'average_temperature': 41,
+            'average_temperature_uncertainty': 0.37,
+            'city': 'Jerez',
+            'country': 'Spain',
+            'day': '2021-08-01',
+            'location': {}
+        },
+        {'errors': [
+            'Missing field location.lat',
+            'Missing field location.lon'
+        ]},
+        400
+    ),
+    (
+        {
+            'average_temperature': 41,
+            'average_temperature_uncertainty': 0.37,
+            'city': 'Jerez',
+            'country': 'Spain',
+            'day': '202108-01',
+            'location': {
+                'lat': 31.35,
+                'lon': 49.01
+            }
+        },
+        {'errors': [
+            'Invalid date format for day'
+        ]},
+        400
+    ),
+    (
+        {
+            'average_temperature': 'aa',
+            'average_temperature_uncertainty': '0x.37',
+            'city': 'Jerez',
+            'country': 'Spain',
+            'day': '2021-08-01',
+            'location': {
+                'lat': 31.35,
+                'lon': 49.01
+            }
+        },
+        {'errors': [
+            'average_temperature must be a float',
+            'average_temperature_uncertainty must be a float'
+        ]},
+        400
+    )
+])
+@patch('coruscant.api.Measurement.save')
+def test_add_measurement(m_measurement_save, client, obj, result, status_code):
+    resp = client.post('/api/measurement/add', json=obj)
+
+    if status_code == 201:
+        m_measurement_save.assert_called_once_with()
+    assert resp.status_code == status_code
+    assert resp.json == result
+
+
 @pytest.mark.parametrize('cities', [
     None,
     5,

@@ -19,12 +19,18 @@ class Measurement(Document):
         }
 
     def save(self, **kwargs):
-        # override the index to go to the proper timeslot
+        # override the index name using the year
         kwargs['index'] = self.day.strftime('global_land_temperatures_by_city-%Y')
         return super().save(**kwargs)
 
     @classmethod
     def get_indexes_for_range(cls, _from: Optional[date] = None, _to: Optional[date] = None) -> str:
+        """
+        Method to generate the list of indexes between a given time range.
+
+        This could be a bit more clever to use wildcards like global_land_temperatures_by_city-2*,
+        but for now, it will do.
+        """
         if not (_from or _to):  # if both are missing, we return the wildcard
             return cls.Index.name
 
