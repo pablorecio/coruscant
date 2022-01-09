@@ -65,3 +65,128 @@ Lastly, for sharding I'll use the "City" as the shard key. This means that every
 ### Web Framework
 
 Given I did not choose a relation database, I will not gain much by using Django on this use case. Without taking advantage of the admin, ORM, forms, templates, etc... seems quite unnecessary to go full-on "batteries included" approach. So instead, I'll use Flask with some additional libraries like the Elasticsearch pyhton client.
+
+## Docker startup
+
+To get everything started up, we just need both `docker` and `docker-compose`. In a shell, we can run:
+
+```
+$ docker-compose build
+$ docker-compose up
+```
+
+This will spin up our ES cluster (containing 2 nodes) and the Flask server.
+
+## Data import
+
+The data is located in `data/GlobalLandTemperaturesByCity.csv` and we can load it by running
+
+```
+$ docker-compose exec web python initial-load.py
+```
+
+while both ES and the webserver are up and running. It takes about 90 minutes in my machine due to the volume of data. This would not be a worry in a production environment as the ES cluster will be much faster than a local dev environment.
+
+## Running tests
+
+Using pyenv is recommended to run the tests locally:
+
+```
+$ pyenv virtualenv 3.10.0 coruscant
+$ pyenv activate coruscant
+$ pip install -r requirements-tests.txt
+$ pytest
+```
+
+## Examples
+
+- Find the entry whose city has the highest AverageTemperature since the year 2000.
+
+```
+curl --location --request GET 'http://localhost:5000/api/measurements?cities=1&from=2000-01-01'
+```
+
+```
+{
+    "cities": [
+        {
+            "average_temperature": 39.15600000000001,
+            "average_temperature_uncertainty": 0.37,
+            "city": "Ahvaz",
+            "country": "Iran",
+            "day": "2013-07-01",
+            "location": {
+                "lat": 31.35,
+                "lon": 49.01
+            }
+        }
+    ]
+}
+```
+
+- Following above: assume the temperature observation of the city last month breaks the record. It is 0.1 degree higher with the same uncertainty. Create this entry.
+
+
+```
+curl --location --request POST 'http://localhost:5000/api/measurement/add' \
+--header 'Content-Type: application/json' \
+--data-raw '{
+    "average_temperature": 39.15600000000001,
+    "average_temperature_uncertainty": 0.47,
+    "city": "Ahvaz",
+    "country": "Iran",
+    "day": "2021-12-01",
+    "location": {
+        "lat": 31.35,
+        "lon": 49.01
+    }
+}'
+```
+
+```
+{
+    "average_temperature": 39.15600000000001,
+    "average_temperature_uncertainty": 0.47,
+    "city": "Ahvaz",
+    "country": "Iran",
+    "day": "Wed, 01 Dec 2021 00:00:00 GMT",
+    "location": {
+        "lat": 31.35,
+        "lon": 49.01
+    }
+}
+```
+
+- Following question 1: assume the returned entry has been found erroneous. The actual average temperature of this entry is 2.5 degrees lower. Update this entry.
+
+```
+curl --location --request PATCH 'http://localhost:5000/api/measurement/update?city=Ahvaz&day=2021-12-01' \
+--header 'Content-Type: application/json' \
+--data-raw '{
+    "average_temperature": 36.656
+}'
+```
+
+```
+{
+    "average_temperature": 36.656,
+    "average_temperature_uncertainty": 0.47,
+    "city": "Ahvaz",
+    "country": "Iran",
+    "day": "Wed, 01 Dec 2021 00:00:00 GMT",
+    "location": {
+        "lat": 31.35,
+        "lon": 49.01
+    }
+}
+```
+
+## Last thoughts
+
+This little task took me around 8 hours to complete, mainly due to some issues back and forth with the Elasticsearch libraries. Initially, as added in a code comment, I was going to use elasticsearch-dsl everywhere, but I found out it did not support `collapse` queries.
+
+I worked around it by using aggregation queries, but it ended up being overly complicated just to shoehorn that library everywhere, so I trailed back and refactored the endpoint to use the basic elasticsearch python client and turned out with the code a bit cleaner.
+
+That said, in a real-world example I'd probably use some library like flask-restful to make the API endpoints a bit cleaner, and perhaps a better ES wrapper to make the logic a bit more transparent.
+
+Also, spent a bit of more time being extra careful about the endpoints being well covered for multiple cases, and not raise 500s, adding some comprehensive error handling for the frontend to use.
