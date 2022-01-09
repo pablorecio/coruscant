@@ -1,6 +1,6 @@
 import pytest
 
-from coruscant.app import app
+from app import app
 
 
 @pytest.fixture

@@ -17,7 +17,7 @@ BASE_REQUEST_BODY = {
     15,
     27
 ])
-@patch('coruscant.app.Elasticsearch')
+@patch('coruscant.api.get_es_client')
 def test_get_measurements_size(m_es_client, client, cities):
     path = '/api/measurements'
     body = BASE_REQUEST_BODY.copy()
@@ -52,7 +52,7 @@ def test_get_invalid_measurements_size(client, cities):
     (None, '2018-01-01', [str(y) for y in range(1500, 2019)]),
     (None, None, None),
 ])
-@patch('coruscant.app.Elasticsearch')
+@patch('coruscant.api.get_es_client')
 def test_date_range_to_es_index(m_es_client, client, from_d, to_d, indexes):
     params = {}
     body = BASE_REQUEST_BODY.copy()
@@ -98,7 +98,7 @@ def test_invalid_date_range_to_es_index(client, from_d, to_d):
     assert resp.status_code == 400
 
 
-@patch('coruscant.app.Elasticsearch')
+@patch('coruscant.api.get_es_client')
 def test_convert_es_response(m_es_client, client):
     m_es_client.return_value.search.return_value = {
         "took": 26,
@@ -309,7 +309,7 @@ def test_convert_es_response(m_es_client, client):
     }
 
 
-@patch('coruscant.app.Elasticsearch')
+@patch('coruscant.api.get_es_client')
 def test_es_not_responding(m_es_client, client):
     m_es_client.return_value.search.side_effect = ConnectionError
     path = '/api/measurements'

@@ -7,8 +7,8 @@ from elasticsearch.helpers import bulk
 from elasticsearch_dsl import connections
 
 from coruscant.documents import Measurement
+from coruscant.es import ES_HOST
 
-ES_HOST = 'es01:9200'
 PATH_TO_FILE = 'data/GlobalLandTemperaturesByCity.csv'
 CHUNK_SIZE = 10000
 
