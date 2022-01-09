@@ -2,11 +2,9 @@ from datetime import date, datetime
 
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import ConnectionError
-from elasticsearch_dsl import A, Search
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
-
 
 ES_HOST = 'es01:9200'
 
@@ -29,6 +27,12 @@ def _get_es_indexes(_from, _to):
 # @app.route('/api/measurement/update')
 @app.route('/api/measurements')
 def measurements_list():
+    # Note: I am using elasticsearch-py instead of elasticsearch-dsl-py because
+    # the later does not yet support the collapse operator:
+    # https://github.com/elastic/elasticsearch-dsl-py/issues/1215
+    # and making this query without that operator would end up into a very
+    # complex pipeline of python functions that I'd rather avoid. This way,
+    # the code is much cleaner IMO.
     query_parameters = request.args
 
     try:
@@ -39,10 +43,19 @@ def measurements_list():
     _from = request.args.get('from')
     _to = request.args.get('to')
 
+    body = {
+        'collapse': {'field': 'city'},
+        'sort': [{"average_temperature": "desc"}],
+        'size': number_of_cities
+    }
+
     if _from or _to:
+        date_range = {}
 
         if _from:
             try:
+                # Adds it to the query
+                date_range['gte'] = _from
                 _from = datetime.strptime(_from, '%Y-%m-%d').date()
             except ValueError:
                 return {"error": f"Invalid date format: {_from}"}, 400
@@ -51,6 +64,8 @@ def measurements_list():
 
         if _to:
             try:
+                # Adds it to the query
+                date_range['lte'] = _to
                 _to = datetime.strptime(_to, '%Y-%m-%d').date()
             except ValueError:
                 return {"error": f"Invalid date format: {_to}"}, 400
@@ -61,56 +76,20 @@ def measurements_list():
             return {"error": "'from' has to be before 'to'"}, 400
 
         indexes = _get_es_indexes(_from, _to)
+
+        body['query'] = {'range': {'day': date_range}}
     else:
-        indexes = None
+        indexes = 'global_land_temperatures_by_city-*'
 
     client = _get_es_client()
 
-    a_cities = A('terms', field='city', size=number_of_cities, order={'max_average_temperature': 'desc'})
-    a_max_average_temperature = A('max', field='average_temperature')
-    a_by_top_hit = A('top_hits', size=1, sort=[{'average_temperature': 'desc'}])
-
-    s = Search(index=indexes).using(client)
-    (
-        s.aggs
-        .bucket('cities', a_cities)
-        .metric('max_average_temperature', a_max_average_temperature)
-        .pipeline('by_top_hit', a_by_top_hit)
-    )
-    # This is equivalent to:
-    # {
-    #     "aggs": {
-    #         "cities": {
-    #             "terms": {
-    #                 "field": "city",
-    #                 "size": 5,
-    #                 "order": { "max_average_temperature" : "desc" }
-    #             },
-    #             "aggs": { // Sub-aggregations
-    #                 "by_top_hit": { "top_hits": {
-    #                     "sort" : [
-    #                         { "average_temperature" : "desc" }
-    #                     ],
-    #                     "size": 1
-    #                 } },
-    #                 "max_average_temperature": { "max": { "field": "average_temperature" } }
-    #             }
-    #         }
-    #     }
-    # }
-
     try:
-        resp = s.params(ignore_unavailable=True).query().execute()
+        response = client.search(index=indexes, body=body, ignore_unavailable=True)
     except ConnectionError:
         return {'error': 'ES does not seem to be reachable'}, 400
 
     return jsonify(
-        {
-            'cities': [
-                city['by_top_hit']['hits']['hits'][0]['_source'].to_dict()
-                for city in resp.aggregations['cities']['buckets']
-            ]
-        }
+        {'cities': [hit['_source'] for hit in response['hits']['hits']]}
     )
 
 

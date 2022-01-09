@@ -1,8 +1,14 @@
-from unittest.mock import patch, Mock
+from unittest.mock import patch
 import urllib
 
 import pytest
 from elasticsearch.exceptions import ConnectionError
+
+BASE_REQUEST_BODY = {
+    'collapse': {'field': 'city'},
+    'sort': [{"average_temperature": "desc"}],
+    'size': 10
+}
 
 
 @pytest.mark.parametrize('cities', [
@@ -11,14 +17,22 @@ from elasticsearch.exceptions import ConnectionError
     15,
     27
 ])
-@patch('coruscant.app.Search')
-def test_get_measurements_size(m_search, client, cities):
+@patch('coruscant.app.Elasticsearch')
+def test_get_measurements_size(m_es_client, client, cities):
     path = '/api/measurements'
+    body = BASE_REQUEST_BODY.copy()
     if cities:
         path = f'{path}?cities={cities}'
+        body['size'] = cities
+
     resp = client.get(path)
     assert resp.status_code == 200
-    assert m_search.return_value.using.return_value.aggs.bucket.call_args_list[0][0][1].size == (cities or 10)
+
+    m_es_client.return_value.search.assert_called_once_with(
+        index='global_land_temperatures_by_city-*',
+        body=body,
+        ignore_unavailable=True
+    )
 
 
 @pytest.mark.parametrize('cities', [
@@ -38,13 +52,21 @@ def test_get_invalid_measurements_size(client, cities):
     (None, '2018-01-01', [str(y) for y in range(1500, 2019)]),
     (None, None, None),
 ])
-@patch('coruscant.app.Search')
-def test_date_range_to_es_index(m_search, client, from_d, to_d, indexes):
+@patch('coruscant.app.Elasticsearch')
+def test_date_range_to_es_index(m_es_client, client, from_d, to_d, indexes):
     params = {}
+    body = BASE_REQUEST_BODY.copy()
+    if from_d or to_d:
+        date_range = {}
     if from_d:
         params['from'] = from_d
+        date_range['gte'] = from_d
     if to_d:
         params['to'] = to_d
+        date_range['lte'] = to_d
+    if from_d or to_d:
+        body['query'] = {'range': {'day': date_range}}
+
     path = '/api/measurements'
     if params:
         path = f'{path}?{urllib.parse.urlencode(params)}'
@@ -55,9 +77,13 @@ def test_date_range_to_es_index(m_search, client, from_d, to_d, indexes):
     if indexes:
         final_indexes = ','.join(map(lambda x: f'global_land_temperatures_by_city-{x[:4]}', indexes))
     else:
-        final_indexes = None
+        final_indexes = 'global_land_temperatures_by_city-*'
 
-    m_search.assert_called_once_with(index=final_indexes)
+    m_es_client.return_value.search.assert_called_once_with(
+        index=final_indexes,
+        body=body,
+        ignore_unavailable=True
+    )
 
 
 @pytest.mark.parametrize('from_d, to_d', [
@@ -72,223 +98,148 @@ def test_invalid_date_range_to_es_index(client, from_d, to_d):
     assert resp.status_code == 400
 
 
-@patch('coruscant.app.Search')
-def test_convert_es_response(m_search, client):
-
-    # Very ugly hack to workaround the fact that ES library does not return
-    # a dictionary, but rather its own custom dict that we need to convert
-    # using .to_dict() method
-    res_1_source = Mock()
-    res_1_source.to_dict.return_value = {
-        "day": "2013-07-01T00:00:00",
-        "average_temperature": 39.15600000000001,
-        "average_temperature_uncertainty": 0.37,
-        "city": "Ahvaz",
-        "country": "Iran",
-        "location": {
-            "lat": 31.35,
-            "lon": 49.01
-        }
-    }
-    res_2_source = Mock()
-    res_2_source.to_dict.return_value = {
-        "day": "2013-07-01T00:00:00",
-        "average_temperature": 39.15600000000001,
-        "average_temperature_uncertainty": 0.37,
-        "city": "Masjed E Soleyman",
-        "country": "Iran",
-        "location": {
-            "lat": 31.35,
-            "lon": 49.01
-        }
-    }
-    res_3_source = Mock()
-    res_3_source.to_dict.return_value = {
-        "day": "2012-07-01T00:00:00",
-        "average_temperature": 38.531,
-        "average_temperature_uncertainty": 0.431,
-        "city": "Abadan",
-        "country": "Iran",
-        "location": {
-            "lat": 29.74,
-            "lon": 48.0
-        }
-    }
-    res_4_source = Mock()
-    res_4_source.to_dict.return_value = {
-        "day": "2012-07-01T00:00:00",
-        "average_temperature": 38.531,
-        "average_temperature_uncertainty": 0.431,
-        "city": "Khorramshahr",
-        "country": "Iran",
-        "location": {
-            "lat": 29.74,
-            "lon": 48.0
-        }
-    }
-    res_5_source = Mock()
-    res_5_source.to_dict.return_value = {
-        "day": "2000-07-01T00:00:00",
-        "average_temperature": 38.283,
-        "average_temperature_uncertainty": 0.436,
-        "city": "Baghdad",
-        "country": "Iraq",
-        "location": {
-            "lat": 32.95,
-            "lon": 45.0
-        }
-    }
-    (
-        m_search.return_value
-        .using.return_value
-        .params.return_value
-        .query.return_value
-        .execute
-        .return_value.aggregations
-    ) = {
-        "cities": {
-            "doc_count_error_upper_bound": -1,
-            "sum_other_doc_count": 578382,
-            "buckets": [
+@patch('coruscant.app.Elasticsearch')
+def test_convert_es_response(m_es_client, client):
+    m_es_client.return_value.search.return_value = {
+        "took": 26,
+        "timed_out": False,
+        "_shards": {
+            "total": 14,
+            "successful": 14,
+            "skipped": 10,
+            "failed": 0
+        },
+        "hits": {
+            "total": {
+                "value": 10000,
+                "relation": "gte"
+            },
+            "max_score": None,
+            "hits": [
                 {
-                    "key": "Ahvaz",
-                    "doc_count": 165,
-                    "by_top_hit": {
-                        "hits": {
-                            "total": {
-                                "value": 165,
-                                "relation": "eq"
-                            },
-                            "max_score": None,
-                            "hits": [
-                                {
-                                    "_index": "global_land_temperatures_by_city-2013",
-                                    "_type": "_doc",
-                                    "_id": "pIDEOn4B5Sa-aY70zJZF",
-                                    "_score": None,
-                                    "_source": res_1_source,
-                                    "sort": [
-                                        39.156
-                                    ]
-                                }
-                            ]
+                    "_index": "global_land_temperatures_by_city-2013",
+                    "_type": "_doc",
+                    "_id": "pIDEOn4B5Sa-aY70zJZF",
+                    "_score": None,
+                    "_source": {
+                        "day": "2013-07-01T00:00:00",
+                        "average_temperature": 39.15600000000001,
+                        "average_temperature_uncertainty": 0.37,
+                        "city": "Ahvaz",
+                        "country": "Iran",
+                        "location": {
+                            "lat": 31.35,
+                            "lon": 49.01
                         }
                     },
-                    "max_average_temperature": {
-                        "value": 39.15599822998047
-                    }
+                    "fields": {
+                        "city": [
+                            "Ahvaz"
+                        ]
+                    },
+                    "sort": [
+                        39.156
+                    ]
                 },
                 {
-                    "key": "Masjed E Soleyman",
-                    "doc_count": 165,
-                    "by_top_hit": {
-                        "hits": {
-                            "total": {
-                                "value": 165,
-                                "relation": "eq"
-                            },
-                            "max_score": None,
-                            "hits": [
-                                {
-                                    "_index": "global_land_temperatures_by_city-2013",
-                                    "_type": "_doc",
-                                    "_id": "zsbgOn4B5Sa-aY70b05w",
-                                    "_score": None,
-                                    "_source": res_2_source,
-                                    "sort": [
-                                        39.156
-                                    ]
-                                }
-                            ]
+                    "_index": "global_land_temperatures_by_city-2013",
+                    "_type": "_doc",
+                    "_id": "zsbgOn4B5Sa-aY70b05w",
+                    "_score": None,
+                    "_source": {
+                        "day": "2013-07-01T00:00:00",
+                        "average_temperature": 39.15600000000001,
+                        "average_temperature_uncertainty": 0.37,
+                        "city": "Masjed E Soleyman",
+                        "country": "Iran",
+                        "location": {
+                            "lat": 31.35,
+                            "lon": 49.01
                         }
                     },
-                    "max_average_temperature": {
-                        "value": 39.15599822998047
-                    }
+                    "fields": {
+                        "city": [
+                            "Masjed E Soleyman"
+                        ]
+                    },
+                    "sort": [
+                        39.156
+                    ]
                 },
                 {
-                    "key": "Abadan",
-                    "doc_count": 165,
-                    "by_top_hit": {
-                        "hits": {
-                            "total": {
-                                "value": 165,
-                                "relation": "eq"
-                            },
-                            "max_score": None,
-                            "hits": [
-                                {
-                                    "_index": "global_land_temperatures_by_city-2012",
-                                    "_type": "_doc",
-                                    "_id": "j3_EOn4B5Sa-aY70Azsc",
-                                    "_score": None,
-                                    "_source": res_3_source,
-                                    "sort": [
-                                        38.531
-                                    ]
-                                }
-                            ]
+                    "_index": "global_land_temperatures_by_city-2012",
+                    "_type": "_doc",
+                    "_id": "j3_EOn4B5Sa-aY70Azsc",
+                    "_score": None,
+                    "_source": {
+                        "day": "2012-07-01T00:00:00",
+                        "average_temperature": 38.531,
+                        "average_temperature_uncertainty": 0.431,
+                        "city": "Abadan",
+                        "country": "Iran",
+                        "location": {
+                            "lat": 29.74,
+                            "lon": 48.0
                         }
                     },
-                    "max_average_temperature": {
-                        "value": 38.53099822998047
-                    }
+                    "fields": {
+                        "city": [
+                            "Abadan"
+                        ]
+                    },
+                    "sort": [
+                        38.531
+                    ]
                 },
                 {
-                    "key": "Khorramshahr",
-                    "doc_count": 165,
-                    "by_top_hit": {
-                        "hits": {
-                            "total": {
-                                "value": 165,
-                                "relation": "eq"
-                            },
-                            "max_score": None,
-                            "hits": [
-                                {
-                                    "_index": "global_land_temperatures_by_city-2012",
-                                    "_type": "_doc",
-                                    "_id": "WLjbOn4B5Sa-aY70HLsL",
-                                    "_score": None,
-                                    "_source": res_4_source,
-                                    "sort": [
-                                        38.531
-                                    ]
-                                }
-                            ]
+                    "_index": "global_land_temperatures_by_city-2012",
+                    "_type": "_doc",
+                    "_id": "WLjbOn4B5Sa-aY70HLsL",
+                    "_score": None,
+                    "_source": {
+                        "day": "2012-07-01T00:00:00",
+                        "average_temperature": 38.531,
+                        "average_temperature_uncertainty": 0.431,
+                        "city": "Khorramshahr",
+                        "country": "Iran",
+                        "location": {
+                            "lat": 29.74,
+                            "lon": 48.0
                         }
                     },
-                    "max_average_temperature": {
-                        "value": 38.53099822998047
-                    }
+                    "fields": {
+                        "city": [
+                            "Khorramshahr"
+                        ]
+                    },
+                    "sort": [
+                        38.531
+                    ]
                 },
                 {
-                    "key": "Baghdad",
-                    "doc_count": 108,
-                    "by_top_hit": {
-                        "hits": {
-                            "total": {
-                                "value": 108,
-                                "relation": "eq"
-                            },
-                            "max_score": None,
-                            "hits": [
-                                {
-                                    "_index": "global_land_temperatures_by_city-2000",
-                                    "_type": "_doc",
-                                    "_id": "pYfHOn4B5Sa-aY70LAlL",
-                                    "_score": None,
-                                    "_source": res_5_source,
-                                    "sort": [
-                                        38.283
-                                    ]
-                                }
-                            ]
+                    "_index": "global_land_temperatures_by_city-2012",
+                    "_type": "_doc",
+                    "_id": "qJHLOn4B5Sa-aY70rEXI",
+                    "_score": None,
+                    "_source": {
+                        "day": "2012-07-01T00:00:00",
+                        "average_temperature": 38.049,
+                        "average_temperature_uncertainty": 0.6579999999999999,
+                        "city": "Buraydah",
+                        "country": "Saudi Arabia",
+                        "location": {
+                            "lat": 26.52,
+                            "lon": 44.78
                         }
                     },
-                    "max_average_temperature": {
-                        "value": 38.28300094604492
-                    }
+                    "fields": {
+                        "city": [
+                            "Buraydah"
+                        ]
+                    },
+                    "sort": [
+                        38.049
+                    ]
                 }
             ]
         }
@@ -300,72 +251,67 @@ def test_convert_es_response(m_search, client):
     assert resp.json == {
         "cities": [
             {
+                "day": "2013-07-01T00:00:00",
                 "average_temperature": 39.15600000000001,
                 "average_temperature_uncertainty": 0.37,
                 "city": "Ahvaz",
                 "country": "Iran",
-                "day": "2013-07-01T00:00:00",
                 "location": {
                     "lat": 31.35,
                     "lon": 49.01
                 }
             },
             {
+                "day": "2013-07-01T00:00:00",
                 "average_temperature": 39.15600000000001,
                 "average_temperature_uncertainty": 0.37,
                 "city": "Masjed E Soleyman",
                 "country": "Iran",
-                "day": "2013-07-01T00:00:00",
                 "location": {
                     "lat": 31.35,
                     "lon": 49.01
                 }
             },
             {
+                "day": "2012-07-01T00:00:00",
                 "average_temperature": 38.531,
                 "average_temperature_uncertainty": 0.431,
                 "city": "Abadan",
                 "country": "Iran",
-                "day": "2012-07-01T00:00:00",
                 "location": {
                     "lat": 29.74,
                     "lon": 48.0
                 }
             },
             {
+                "day": "2012-07-01T00:00:00",
                 "average_temperature": 38.531,
                 "average_temperature_uncertainty": 0.431,
                 "city": "Khorramshahr",
                 "country": "Iran",
-                "day": "2012-07-01T00:00:00",
                 "location": {
                     "lat": 29.74,
                     "lon": 48.0
                 }
             },
             {
-                "average_temperature": 38.283,
-                "average_temperature_uncertainty": 0.436,
-                "city": "Baghdad",
-                "country": "Iraq",
-                "day": "2000-07-01T00:00:00",
+                "day": "2012-07-01T00:00:00",
+                "average_temperature": 38.049,
+                "average_temperature_uncertainty": 0.6579999999999999,
+                "city": "Buraydah",
+                "country": "Saudi Arabia",
                 "location": {
-                    "lat": 32.95,
-                    "lon": 45.0
+                    "lat": 26.52,
+                    "lon": 44.78
                 }
-            }
+            },
         ]
     }
 
-@patch('coruscant.app.Search')
-def test_es_not_responding(m_search, client):
-    (
-        m_search.return_value
-        .using.return_value
-        .params.return_value
-        .query.return_value
-        .execute.side_effects
-    ) = ConnectionError
+
+@patch('coruscant.app.Elasticsearch')
+def test_es_not_responding(m_es_client, client):
+    m_es_client.return_value.search.side_effect = ConnectionError
     path = '/api/measurements'
     resp = client.get(path)
-    assert resp.status_code == 200
+    assert resp.status_code == 400
