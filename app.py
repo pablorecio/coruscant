@@ -2,6 +2,7 @@ from flask import Flask
 
 from coruscant.api import (
     measurement_add as measurement_add_api,
+    measurament_update as measurament_update_api,
     measurements_list as measurements_list_api
 )
 
@@ -13,7 +14,11 @@ def measurement_add():
     return measurement_add_api()
 
 
-# @app.route('/api/measurement/update')
+@app.route('/api/measurement/update', methods=['PATCH'])
+def measurament_update():
+    return measurament_update_api()
+
+
 @app.route('/api/measurements')
 def measurements_list():
     return measurements_list_api()

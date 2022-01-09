@@ -57,6 +57,43 @@ def measurement_add():
 
 
 # @app.route('/api/measurement/update')
+def measurament_update():
+    # First, get the document from ES and update it. We could do an "update by query",
+    # but it's the same logic under the hood, so I rather be explicit here.
+
+    FIELDS = ('average_temperature', 'average_temperature_uncertainty')
+
+    try:
+        city = request.args['city']
+        day = request.args['day']
+    except KeyError:
+        return {'errors': ['city and day fields required as URL params']}, 400
+
+    body = request.json
+    if 'average_temperature' not in body and 'average_temperature_uncertainty' not in body:
+        return {'errors': ['Please, provide either average_temperature or average_temperature_uncertainty']}, 400
+
+    s = Measurement.search().params(
+        routing=city
+    ).filter(
+        'term', day=day
+    ).filter(
+        'term', city=city
+    )
+
+    try:
+        response = s.execute()
+    except ConnectionError:
+        return {'errors': ['ES does not seem to be reachable']}, 400
+
+    if len(response.hits) == 0:
+        return {'errors': ['Could not find the document']}, 404
+
+    measurement = response.hits[0]
+    measurement.update(**{field: body[field] for field in FIELDS if field in body})
+
+    return measurement.to_dict(), 200
+
 
 # @app.route('/api/measurements')
 def measurements_list():
@@ -72,14 +109,14 @@ def measurements_list():
     try:
         number_of_cities = int(query_parameters.get('cities', 10))
     except ValueError:
-        return {"error": f"Invalid cities number: {query_parameters.get('cities')}"}, 400
+        return {'errors': [f"Invalid cities number: {query_parameters.get('cities')}"]}, 400
 
     _from = request.args.get('from')
     _to = request.args.get('to')
 
     body = {
         'collapse': {'field': 'city'},
-        'sort': [{"average_temperature": "desc"}],
+        'sort': [{'average_temperature': 'desc'}],
         'size': number_of_cities
     }
 
@@ -92,7 +129,7 @@ def measurements_list():
                 date_range['gte'] = _from
                 _from = datetime.strptime(_from, '%Y-%m-%d').date()
             except ValueError:
-                return {"error": f"Invalid date format: {_from}"}, 400
+                return {'errors': [f'Invalid date format: {_from}']}, 400
 
         if _to:
             try:
@@ -100,10 +137,10 @@ def measurements_list():
                 date_range['lte'] = _to
                 _to = datetime.strptime(_to, '%Y-%m-%d').date()
             except ValueError:
-                return {"error": f"Invalid date format: {_to}"}, 400
+                return {'errors': [f'Invalid date format: {_to}']}, 400
 
         if _from and _to and _from > _to:
-            return {"error": "'from' has to be before 'to'"}, 400
+            return {'errors': ["'from' has to be before 'to'"]}, 400
 
         indexes = Measurement.get_indexes_for_range(_from, _to)
 
@@ -116,7 +153,7 @@ def measurements_list():
     try:
         response = client.search(index=indexes, body=body, ignore_unavailable=True)
     except ConnectionError:
-        return {'error': 'ES does not seem to be reachable'}, 400
+        return {'errors': ['ES does not seem to be reachable']}, 400
 
     return jsonify(
         {'cities': [hit['_source'] for hit in response['hits']['hits']]}

@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 import urllib
 
 import pytest
@@ -108,6 +108,140 @@ def test_add_measurement(m_measurement_save, client, obj, result, status_code):
         m_measurement_save.assert_called_once_with()
     assert resp.status_code == status_code
     assert resp.json == result
+
+
+@patch('coruscant.api.Measurement.save')
+def test_add_measurement_es_not_responding(m_measurement_save, client):
+    m_measurement_save.side_effect = ConnectionError
+    path = '/api/measurement/add'
+
+    resp = client.post(path, json={'average_temperature': 54.1})
+    assert resp.status_code == 400
+
+
+@pytest.mark.parametrize('city, day, payload, objects, result, status_code', [
+    (
+        'Ahvaz',
+        '2013-07-01',
+        {
+            'average_temperature': 40.2
+        },
+        [
+            {
+                'average_temperature': 39.15600000000001,
+                'average_temperature_uncertainty': 0.37,
+                'city': 'Ahvaz',
+                'country': 'Iran',
+                'day': '2013-07-01',
+                'location': {
+                    'lat': 31.35,
+                    'lon': 49.01
+                }
+            }
+        ],
+        {
+            'average_temperature': 40.2,
+            'average_temperature_uncertainty': 0.37,
+            'city': 'Ahvaz',
+            'country': 'Iran',
+            'day': '2013-07-01',
+            'location': {
+                'lat': 31.35,
+                'lon': 49.01
+            }
+        },
+        200
+    ),
+    (
+        None,
+        None,
+        {
+            'average_temperature': 40.2
+        },
+        [],
+        {'errors': ['city and day fields required as URL params']},
+        400
+    ),
+    (
+        "Jerez",
+        None,
+        {
+            'average_temperature': 40.2
+        },
+        [],
+        {'errors': ['city and day fields required as URL params']},
+        400
+    ),
+    (
+        'Ahvaz',
+        '2013-07-01',
+        {
+            'somethingelse': 40.2
+        },
+        [],
+        {'errors': ['Please, provide either average_temperature or average_temperature_uncertainty']},
+        400
+    ),
+    (
+        'Ahvaz',
+        '2013-07-01',
+        {
+            'average_temperature': 40.2
+        },
+        [],
+        {'errors': ['Could not find the document']},
+        404
+    )
+])
+@patch('coruscant.api.Measurement.search')
+def test_update_measurement(m_measurement_search, client, city, day, payload, objects, result, status_code):
+    hits = []
+    for data in objects:
+        obj = Mock()
+        obj.to_dict.return_value = data
+        hits.append(obj)
+
+    if len(hits):
+        hits[0].to_dict.return_value.update(payload)
+
+    # first, we need to patch the elasticsearch-dsl methods. this is a long one
+    (
+        m_measurement_search.return_value
+        .params.return_value
+        .filter.return_value
+        .filter.return_value
+        .execute.return_value
+        .hits
+    ) = hits
+
+    path = '/api/measurement/update'
+    params = {}
+    if city:
+        params['city'] = city
+    if day:
+        params['day'] = day
+    if params:
+        path = f'{path}?{urllib.parse.urlencode(params)}'
+
+    resp = client.patch(path, json=payload)
+
+    assert resp.status_code == status_code
+    assert resp.json == result
+
+
+@patch('coruscant.api.Measurement.search')
+def test_update_measurement_es_not_responding(m_measurement_search, client):
+    (
+        m_measurement_search.return_value
+        .params.return_value
+        .filter.return_value
+        .filter.return_value
+        .execute.side_effect
+    ) = ConnectionError
+    path = '/api/measurement/update?city=Jerez&day=2019-11-01'
+
+    resp = client.patch(path, json={'average_temperature': 54.1})
+    assert resp.status_code == 400
 
 
 @pytest.mark.parametrize('cities', [
